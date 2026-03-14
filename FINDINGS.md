@@ -194,6 +194,59 @@
 
 ---
 
+## Round 5 : Modelisation — Choix techniques et corrections — 2026-03-14
+
+*Pipeline de modelisation LightGBM two-stage. 3 bugs critiques identifies et corriges.*
+
+### F25. Bug critique : early stopping a 1-2 iterations (Sofiane)
+- **Symptome** : le classificateur LightGBM s'arretait apres 1-2 iterations (decision stump), produisant F1=0.03
+- **Cause** : `eval_metric='binary_logloss'` + `scale_pos_weight=9.47` → la logloss penalise les predictions confiantes pour la classe minoritaire upweightee. Apres 1 iteration, logloss augmente monotoniquement → early stopping declenche immediatement
+- **Fix** : `eval_metric='auc'` mesure la qualite du ranking, insensible au biais de calibration. Resultat : 33-169 iterations, AUC 0.82-0.86
+- **Lecon** : avec class imbalance + scale_pos_weight, JAMAIS utiliser logloss pour l'early stopping
+
+### F26. Bug : focal loss metric par defaut (Sofiane)
+- **Symptome** : focal loss stoppait aussi a 1 iteration, AUC=0.20
+- **Cause** : `LGBMClassifier` ajoute automatiquement `binary_logloss` comme metric par defaut, AVANT la metric custom. `first_metric_only=True` selectionnait logloss au lieu de notre AUC custom
+- **Fix** : `metric='none'` dans les params pour supprimer la metric par defaut
+
+### F27. Bug : comparaison biaisee des approches (Sofiane)
+- **Symptome** : LightGBM (F1=0.17) semblait inferieur a LogReg (F1=0.21)
+- **Cause** : LogReg optimisait threshold/K via grid search (trouvant t=0.20, K=75) tandis que LightGBM utilisait des valeurs fixes (t=0.30, K=50). Avec ~350 positifs/mois, K=75 → recall max 21%, K=50 → recall max 14%
+- **Fix** : grid search sur threshold/K/alpha pour toutes les approches, en reutilisant les predictions pre-calculees (pas de re-entrainement)
+- **Resultat apres correction** : LightGBM genere deja +55% de profit vs LogReg (1.47M vs 949K) grace au regressor qui identifie les opportunites a haute valeur
+
+### F28. Choix de l'eval metric : AUC vs logloss
+- AUC mesure si le modele **classe correctement** les positifs au-dessus des negatifs
+- Logloss mesure la **calibration** des probabilites (proche de la vraie distribution)
+- Pour un probleme de selection/ranking, AUC est le bon choix
+- La calibration des probas n'est pas critique car on utilise un ranking relatif (alpha * rank(proba) + (1-alpha) * rank(profit))
+
+### F29. Architecture de la pipeline de selection
+- **Selection par mois** : pour chaque mois cible, on selectionne independamment
+- **Score = alpha * rank(proba) + (1-alpha) * rank(pred_profit)** : rank-based blending, smooth, evite les effets de seuil
+- **Contrainte [10, 100]** : enforced per month (ON + OFF combines)
+- **F1 de selection** (et non F1 du classificateur) : `f1_score(TARGET, selected)` sur TOUTES les opportunites du mois. C'est le vrai metric du jury
+
+### F30. Evaluation du jury — analyse de evaluate.py
+- **F1** : calcule par PEAKID (ON et OFF separement), puis moyenne des deux
+- **Profit** : `|PR| - COST` pour chaque opportunite selectionnee, somme totale
+- **Ground truth** : outer join entre prices et costs — les EIDs sans prix ont PR=0 (pas profitable)
+- **Contrainte** : max 100 selections par mois (enforce dans evaluate.py)
+- **Format CSV** : colonnes `TARGET_MONTH`, `PEAK_TYPE` (ON/OFF), `EID`
+- **IMPORTANT** : le F1 est calcule sur l'union profitable ∪ selected (outer join), pas seulement sur les selected. Cela signifie que les FN comptent (opportunites profitables non selectionnees)
+- **evaluate_pipeline() mis a jour** pour correspondre exactement a cette methode (F1 par PEAKID puis moyenne)
+
+### F31. Pipeline de production — main.py
+- Script autonome : `python main.py --start-month 2024-01 --end-month 2024-12`
+- Reconstruit le master dataset a partir des donnees brutes (DuckDB, 2GB memory limit)
+- Entraine les modeles sur toutes les donnees anterieures au start-month
+- Selectionne les opportunites avec le pipeline two-stage
+- Output : `opportunities.csv` au format jury (TARGET_MONTH, PEAK_TYPE, EID)
+- Compatible avec les donnees 2024 et futures (2025)
+- Le jury fournira les donnees 2025 (sim_daily, sim_monthly, costs) ; le script les traitera automatiquement
+
+---
+
 ## Hypotheses a verifier
 
 - [ ] H1 : PSD=0 signifie "pas de congestion simulee" (pas un artefact)
