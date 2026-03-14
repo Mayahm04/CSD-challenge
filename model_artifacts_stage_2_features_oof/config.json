@@ -1,0 +1,6 @@
+{
+  "best_k": 16,
+  "best_rf_config_id": 1,
+  "train_end": "2023-12",
+  "month_col": "MONTH"
+}
