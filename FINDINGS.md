@@ -136,6 +136,64 @@
 
 ---
 
+## Round 4 : Statistiques du master dataset — 2026-03-14
+
+*Inspection du master dataset genere par Rachid. 6 findings critiques pour la modelisation.*
+
+### F19. Dimensions du master dataset
+- **211,510 lignes**, **3,173 EIDs**, 48 mois (2020-01 a 2023-12), 2 PEAKIDs, **71 colonnes** (55 features exploitables)
+- **0 NaN** dans tout le dataset (fillna applique correctement)
+- **PSM features presentes** : Rachid avait les donnees sim_monthly sur sa machine, les 16 colonnes PSM sont remplies
+- Lignes par mois : de 2,282 (2020) a 6,344 (2023) — croissance liee a l'augmentation des EIDs
+
+### F20. Taux de profitabilite reel (CORRECTION)
+- **7.28% global** (15,406 / 211,510), **7.55% dans le pool market-validated** (15,406 / 204,161)
+- L'ancien taux de 14.78% etait base sur l'univers costs-only (927 EIDs). L'univers hybride ajoute des EIDs avec PR=0 → dilution du taux
+- `scale_pos_weight ≈ 12.2` pour LightGBM
+
+### F21. sim-only = 0% positif (CRITIQUE)
+- Les **7,349 lignes** `is_sim_only=1` n'ont **AUCUN** TARGET=1
+- Normal : pas de PR ni C pour ces EIDs → PROFIT=0 par definition
+- **Implication** : exclure du training set. Predire avec precaution (aucune donnee de validation)
+
+### F22. Concept drift temporel (CRITIQUE)
+| Annee | Lignes | Positifs | Taux |
+|-------|--------|----------|------|
+| 2020 | 28,767 | 3,092 | **10.7%** |
+| 2021 | 44,246 | 4,062 | **9.2%** |
+| 2022 | 59,288 | 4,736 | **8.0%** |
+| 2023 | 71,860 | 3,516 | **4.9%** |
+
+- La profitabilite **diminue chaque annee** : cause possible = marche plus efficient, plus de competition
+- **Implication** : le modele entraine sur 2020-2022 (~9%) sera evalue sur 2023 (~5%). Walk-forward CV obligatoire. Le seuil de decision doit etre calibre sur les donnees recentes, pas sur la moyenne historique.
+
+### F23. Top features predictives (correlation Pearson avec TARGET)
+| Feature | r |
+|---------|---|
+| `profitable_count_3m` | **+0.365** |
+| `psm_abs_max` | +0.189 |
+| `psm_abs_nonzero_mean` | +0.180 |
+| `psd_nonzero_count` | +0.180 |
+| `psm_abs_sum` | +0.135 |
+| `psd_abs_max` | +0.129 |
+| `pr_rolling3_mean` | +0.122 |
+| `psd_signed_mean` | -0.121 |
+| `psd_scenario_spread` | +0.108 |
+| `pr_lag1` | +0.107 |
+
+- `profitable_count_3m` domine : fort signal de persistence (un EID profitable le reste souvent)
+- Les features PSM (~0.18-0.19) sont plus predictives que les features PSD (~0.13-0.18)
+- Les features d'impact brutes (hydro_abs_mean, load_abs_mean) ont une correlation tres faible (<0.02)
+- Les features engineerees (log, max, scenario spread) importent plus que les moyennes brutes
+
+### F24. Distribution PROFIT (TARGET=1 uniquement)
+- min=0, **median=342**, mean=2,372, **max=212,803**, std=7,442
+- Distribution **tres asymetrique a droite** : quelques opportunites extremement profitables dominent
+- **Implication** : utiliser `log1p(PROFIT)` comme cible du regresseur pour compresser les extremes
+- Le modele doit identifier ces rares "jackpots" pour maximiser le profit net
+
+---
+
 ## Hypotheses a verifier
 
 - [ ] H1 : PSD=0 signifie "pas de congestion simulee" (pas un artefact)
