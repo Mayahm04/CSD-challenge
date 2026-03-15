@@ -247,6 +247,58 @@
 
 ---
 
+## Round 6 : Optimisation Optuna et resultats finaux — 2026-03-14
+
+### F32. Optuna : 200 trials, 3h12min (Google Colab)
+- **Meilleur score combine** : 0.6199 (trial 183/200)
+- Score = 0.5 * F1 + 0.5 * normalized_profit (objectif bi-critere)
+- Sampler TPE, 30 startup trials
+- 4 folds walk-forward trimestriels pour la rapidite
+- Espace de recherche : 20 hyperparametres (8 clf + 7 reg + threshold + K + alpha)
+
+### F33. Hyperparametres optimaux
+| Composant | Parametre | Valeur |
+|-----------|-----------|--------|
+| Classifier | learning_rate | 0.0205 |
+| Classifier | max_depth | 4 |
+| Classifier | num_leaves | 46 |
+| Classifier | min_child_samples | 46 |
+| Classifier | scale_pos_weight | 16.566 |
+| Classifier | subsample | 0.716 |
+| Classifier | colsample_bytree | 0.877 |
+| Regressor | learning_rate | 0.1367 |
+| Regressor | max_depth | 8 |
+| Regressor | num_leaves | 32 |
+| Regressor | min_child_samples | 116 |
+| Regressor | subsample | 0.692 |
+| Regressor | colsample_bytree | 0.797 |
+| Selection | threshold | 0.1865 |
+| Selection | K | 80 |
+| Selection | alpha | 0.707 |
+
+**Observations cles** :
+- `scale_pos_weight=16.6` (vs defaut 9.5) → upweight plus agressif des positifs
+- `threshold=0.19` (vs defaut 0.30) → admet plus de candidats
+- `alpha=0.71` → la probabilite domine le ranking (vs profit magnitude)
+- `K=80` → selectionne proche du maximum autorise (100)
+- Classifier peu profond (depth=4) vs Regressor profond (depth=8) : taches differentes
+
+### F34. Resultats sur le test (2023-H2 : juillet-decembre 2023)
+- **F1-score moyen (ON/OFF)** : 0.2587
+- **Profit net total** : 711,987
+- **PR AUC** : 0.3753
+- **ROC AUC** : 0.8742
+- Evaluation conforme au script jury (`evaluate.py`) : F1 par PEAKID puis moyenne
+
+### F35. Features les plus importantes (SHAP)
+- `profitable_count_3m` : #1 feature, forte correlation positive avec TARGET
+- `psm_abs_max`, `psm_abs_nonzero_mean` : signal fort des simulations mensuelles
+- `pr_lag1` (=shift(2)) : historique de prix realises
+- `c_lag1` : cout du mois courant (proxy du cout futur)
+- Les features PSD (sim_daily) apportent un signal complementaire mais secondaire vs PSM
+
+---
+
 ## Hypotheses a verifier
 
 - [ ] H1 : PSD=0 signifie "pas de congestion simulee" (pas un artefact)

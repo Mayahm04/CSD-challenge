@@ -34,7 +34,7 @@ from scipy.stats import rankdata
 SEED = 42
 np.random.seed(SEED)
 
-DATA_DIR = Path("data")
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 # Features dropped for multicollinearity (r > 0.99)
 DROP_FEATURES = ['has_profit_history', 'psm_abs_nonzero_std', 'psd_abs_nonzero_std']
@@ -108,6 +108,11 @@ def detect_years(data_dir: Path) -> list:
     return years
 
 
+def _sim_path(name: str, year: int) -> str:
+    """Build absolute path string for a simulation parquet file."""
+    return str(DATA_DIR / name / f"{name}_{year}.parquet").replace("\\", "/")
+
+
 def build_universe(con, years: list, sim_monthly_available: bool) -> pd.DataFrame:
     """Build hybrid universe: market-validated + strong-sim EIDs."""
     print("Building hybrid universe...")
@@ -124,19 +129,21 @@ def build_universe(con, years: list, sim_monthly_available: bool) -> pd.DataFram
     # Compute percentile thresholds from most recent year
     ref_year = max(years)
     if sim_monthly_available:
+        p = _sim_path("sim_monthly", ref_year)
         thresholds = con.execute(f"""
             SELECT
                 APPROX_QUANTILE(ACTIVATIONLEVEL, {SIM_ACTIVATION_PCT / 100.0}) AS act_thresh,
                 APPROX_QUANTILE(ABS(PSM), {SIM_PSM_PCT / 100.0}) AS psm_thresh
-            FROM read_parquet('data/sim_monthly/sim_monthly_{ref_year}.parquet')
+            FROM read_parquet('{p}')
             WHERE ACTIVATIONLEVEL > 0 AND PSM != 0
         """).fetchone()
     else:
+        p = _sim_path("sim_daily", ref_year)
         thresholds = con.execute(f"""
             SELECT
                 APPROX_QUANTILE(ACTIVATIONLEVEL, {SIM_ACTIVATION_PCT / 100.0}) AS act_thresh,
                 APPROX_QUANTILE(ABS(PSD), {SIM_PSM_PCT / 100.0}) AS psm_thresh
-            FROM read_parquet('data/sim_daily/sim_daily_{ref_year}.parquet')
+            FROM read_parquet('{p}')
             WHERE ACTIVATIONLEVEL > 0 AND PSD != 0
         """).fetchone()
 
@@ -146,16 +153,18 @@ def build_universe(con, years: list, sim_monthly_available: bool) -> pd.DataFram
     strong_sim_list = []
     for year in years:
         if sim_monthly_available:
+            p = _sim_path("sim_monthly", year)
             df_y = con.execute(f"""
                 SELECT DISTINCT EID
-                FROM read_parquet('data/sim_monthly/sim_monthly_{year}.parquet')
+                FROM read_parquet('{p}')
                 WHERE ACTIVATIONLEVEL >= {act_thresh} AND ABS(PSM) >= {psm_thresh}
                   AND EID NOT IN (SELECT EID FROM market_eids)
             """).fetchdf()
         else:
+            p = _sim_path("sim_daily", year)
             df_y = con.execute(f"""
                 SELECT DISTINCT EID
-                FROM read_parquet('data/sim_daily/sim_daily_{year}.parquet')
+                FROM read_parquet('{p}')
                 WHERE DAY(DATETIME) BETWEEN 1 AND 7
                   AND ACTIVATIONLEVEL >= {act_thresh} AND ABS(PSD) >= {psm_thresh}
                   AND EID NOT IN (SELECT EID FROM market_eids)
@@ -286,14 +295,15 @@ def extract_sim_daily_features(con, years: list) -> pd.DataFrame:
                STDDEV(CASE WHEN PSD != 0 THEN PSD END) AS psd_scenario_spread,
                AVG(CASE WHEN DAY(DATETIME) <= 3 THEN ABS(PSD) END) AS psd_abs_early,
                AVG(CASE WHEN DAY(DATETIME) BETWEEN 4 AND 7 THEN ABS(PSD) END) AS psd_abs_late
-        FROM read_parquet('data/sim_daily/sim_daily_{year}.parquet')
+        FROM read_parquet('{sim_path}')
         WHERE DAY(DATETIME) BETWEEN 1 AND 7 AND YEAR(DATETIME) = {year}
         GROUP BY EID, DECISION_MONTH, PEAKID
     """
 
     parts = []
     for year in years:
-        query = SIM_DAILY_QUERY.replace('{year}', str(year))
+        p = _sim_path("sim_daily", year)
+        query = SIM_DAILY_QUERY.replace('{year}', str(year)).replace('{sim_path}', p)
         df_y = con.execute(query).fetchdf()
         parts.append(df_y)
         print(f"  {year}: {len(df_y):,} rows")
@@ -327,14 +337,15 @@ def extract_sim_monthly_features(con, years: list) -> pd.DataFrame:
                AVG(CASE WHEN SCENARIOID = 1 THEN ABS(PSM) END) AS psm_abs_s1_mean,
                AVG(CASE WHEN SCENARIOID IN (2,3) THEN ABS(PSM) END) AS psm_abs_s23_mean,
                STDDEV(CASE WHEN PSM != 0 THEN PSM END) AS psm_scenario_spread
-        FROM read_parquet('data/sim_monthly/sim_monthly_{year}.parquet')
+        FROM read_parquet('{sim_path}')
         WHERE YEAR(DATETIME) = {year}
         GROUP BY EID, TARGET_MONTH, PEAKID
     """
 
     parts = []
     for year in years:
-        query = SIM_MONTHLY_QUERY.replace('{year}', str(year))
+        p = _sim_path("sim_monthly", year)
+        query = SIM_MONTHLY_QUERY.replace('{year}', str(year)).replace('{sim_path}', p)
         df_y = con.execute(query).fetchdf()
         parts.append(df_y)
         print(f"  {year}: {len(df_y):,} rows")
