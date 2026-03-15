@@ -48,10 +48,10 @@ META_COLS = ['is_sim_only', 'season']
 SIM_ACTIVATION_PCT = 80
 SIM_PSM_PCT = 80
 
-# Selection defaults (will be optimized if training data available)
-DEFAULT_THRESHOLD = 0.15
-DEFAULT_K = 75
-DEFAULT_ALPHA = 0.5
+# Selection defaults — Optuna-optimized (200 trials, best score=0.6199)
+DEFAULT_THRESHOLD = 0.1865
+DEFAULT_K = 80
+DEFAULT_ALPHA = 0.7072
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -460,14 +460,14 @@ def train_models(master_df: pd.DataFrame, feature_cols: list,
     print(f"  Training: {len(df_tr):,} rows, validation: {len(df_vl):,} rows")
     print(f"  scale_pos_weight = {scale_pos:.2f}")
 
-    # Classifier
+    # Classifier — Optuna-optimized hyperparameters (trial 183/200, score=0.6199)
     clf_params = {
         'objective': 'binary', 'verbosity': -1, 'seed': SEED,
-        'n_estimators': 2000, 'learning_rate': 0.05,
-        'max_depth': 6, 'num_leaves': 31,
-        'min_child_samples': 50, 'subsample': 0.8,
-        'colsample_bytree': 0.8, 'reg_alpha': 1.0, 'reg_lambda': 1.0,
-        'scale_pos_weight': scale_pos,
+        'n_estimators': 2000, 'learning_rate': 0.0205,
+        'max_depth': 4, 'num_leaves': 46,
+        'min_child_samples': 46, 'subsample': 0.7160,
+        'colsample_bytree': 0.8770, 'reg_alpha': 0.0151, 'reg_lambda': 0.0335,
+        'scale_pos_weight': 16.566,
     }
 
     clf = lgb.LGBMClassifier(**clf_params)
@@ -481,14 +481,14 @@ def train_models(master_df: pd.DataFrame, feature_cols: list,
     clf_iters = clf.best_iteration_
     print(f"  Classifier: best_iteration={clf_iters}")
 
-    # Regressor
+    # Regressor — Optuna-optimized hyperparameters
     reg_params = {
         'objective': 'regression', 'metric': 'rmse',
         'verbosity': -1, 'seed': SEED,
-        'n_estimators': 2000, 'learning_rate': 0.05,
-        'max_depth': 6, 'num_leaves': 31,
-        'min_child_samples': 50, 'subsample': 0.8,
-        'colsample_bytree': 0.8, 'reg_alpha': 1.0, 'reg_lambda': 1.0,
+        'n_estimators': 2000, 'learning_rate': 0.1367,
+        'max_depth': 8, 'num_leaves': 32,
+        'min_child_samples': 116, 'subsample': 0.6919,
+        'colsample_bytree': 0.7969, 'reg_alpha': 0.0151, 'reg_lambda': 0.7495,
     }
 
     y_tr_profit = np.log1p(np.maximum(df_tr['PROFIT'].values, 0))
